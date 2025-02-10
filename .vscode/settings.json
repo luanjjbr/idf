@@ -8,6 +8,10 @@
     "idf.toolsPathWin": "C:\\Users\\italo\\.espressif",
     "idf.flashType": "UART",
     "files.associations": {
-        "adc.h": "c"
+        "adc.h": "c",
+        "task.h": "c",
+        "freertos.h": "c",
+        "adc_continuous.h": "c",
+        "adc_cali_scheme.h": "c"
     }
 }
