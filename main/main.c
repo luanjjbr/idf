@@ -17,6 +17,7 @@
 // Definindo a fila
 QueueHandle_t fila;
 
+SemaphoreHandle_t semaforo;
 // Definindo a notificação
 TaskHandle_t task1_handle = NULL;
 TaskHandle_t task2_handle = NULL;
@@ -38,6 +39,18 @@ void configure_pins()
 
     // Configuração do pino de saída digital (LED)
     gpio_set_direction(GPIO_OUTPUT_PIN, GPIO_MODE_OUTPUT); // Definindo o pino como saída
+}
+
+void blink_led(void *params)
+{
+    while (1)
+    {
+        // Código do LED
+        gpio_set_level(GPIO_OUTPUT_PIN, 1);    // Acende o LED
+        vTaskDelay(1000 / portTICK_PERIOD_MS); // Aguarda 1 segundo
+        gpio_set_level(GPIO_OUTPUT_PIN, 0);    // Apaga o LED
+        vTaskDelay(1000 / portTICK_PERIOD_MS); // Aguarda 1 segundo
+    }
 }
 
 void read_adc_task(void *params)
@@ -62,17 +75,6 @@ void read_gpio_task(void *params)
         vTaskDelay(pdMS_TO_TICKS(1000)); // Aguarda 1 segundo
     }
 }
-void blink_led(void *params)
-{
-    while (1)
-    {
-        // Código do LED
-        gpio_set_level(GPIO_OUTPUT_PIN, 1);    // Acende o LED
-        vTaskDelay(1000 / portTICK_PERIOD_MS); // Aguarda 1 segundo
-        gpio_set_level(GPIO_OUTPUT_PIN, 0);    // Apaga o LED
-        vTaskDelay(1000 / portTICK_PERIOD_MS); // Aguarda 1 segundo
-    }
-}
 
 void tarefa1(void *pvParameter)
 {
@@ -81,16 +83,14 @@ void tarefa1(void *pvParameter)
 
     while (1)
     {
-        // Incrementa o valor a cada 1 segundo
-        valor++;
-        ESP_LOGE(tag, "Enviando valor: %d\n", valor);
-
+        valor = (rand() % 50);
         // Envia o valor para a fila
-        xQueueSend(fila, &valor, portMAX_DELAY);
-
-        // Notifica a tarefa 2 de que há um valor disponível
-        xTaskNotifyGive(task2_handle);
-
+        if (xQueueSend(fila, &valor, portMAX_DELAY))
+        {
+            ESP_LOGE(tag, "Enviando valor: %d\n", valor);
+            // Notifica a tarefa 2 de que há um valor disponível
+            xTaskNotifyGive(task2_handle);
+        }
         vTaskDelay(pdMS_TO_TICKS(1000)); // Delay de 1 segundo
     }
 }
@@ -109,6 +109,41 @@ void tarefa2(void *pvParameter)
         {
             ESP_LOGW(tag, "Recebido valor: %d\n", valorRecebido);
         }
+        vTaskDelay(pdMS_TO_TICKS(2000)); // Delay de 2 segundo
+    }
+}
+void tarefa3(void *param)
+{
+    while (1)
+    {
+        // Tenta pegar o semáforo
+        if (xSemaphoreTake(semaforo, portMAX_DELAY))
+        {
+            printf("Tarefa 3 :: Ligando LED\n");
+            gpio_set_level(GPIO_OUTPUT_PIN, 1);
+            vTaskDelay(pdMS_TO_TICKS(1000)); // Mantém ligado por 1s
+            gpio_set_level(GPIO_OUTPUT_PIN, 0);
+            printf("Tarefa 3 :: Desligando LED\n");
+            xSemaphoreGive(semaforo); // Libera o semáforo
+        }
+        vTaskDelay(pdMS_TO_TICKS(2000)); // Espera antes de tentar novamente
+    }
+}
+
+void tarefa4(void *param)
+{
+    while (1)
+    {
+        if (xSemaphoreTake(semaforo, portMAX_DELAY))
+        { // Tenta pegar o semáforo
+            printf("[Tarefa 4 :: Ligando LED\n");
+            gpio_set_level(GPIO_OUTPUT_PIN, 1);
+            vTaskDelay(pdMS_TO_TICKS(1000)); // Mantém ligado por 1s
+            gpio_set_level(GPIO_OUTPUT_PIN, 0);
+            printf("Tarefa 4 :: Desligando LED\n");
+            xSemaphoreGive(semaforo); // Libera o semáforo
+        }
+        vTaskDelay(pdMS_TO_TICKS(3000)); // Espera antes de tentar novamente
     }
 }
 
@@ -118,22 +153,21 @@ void app_main()
     configure_pins();
 
     // Cria as tarefas FreeRTOS para leitura do ADC e do GPIO
-    xTaskCreate(blink_led, "Blink Led", 2048, NULL, 1, NULL);
-    // xTaskCreate(read_adc_task, "Leitura ADC", 2048, NULL, 1, NULL);
-    // xTaskCreate(read_gpio_task, "Leitura GPIO", 2048, NULL, 1, NULL);
+    // xTaskCreate(blink_led, "Blink Led", 2048, NULL, 1, NULL);
+    xTaskCreate(read_adc_task, "Leitura ADC", 2048, NULL, 1, NULL);
+    xTaskCreate(read_gpio_task, "Leitura GPIO", 2048, NULL, 1, NULL);
 
-    /*
-    Cenário:
-    Vamos criar um exemplo onde temos duas tarefas:
-
-        Tarefa 1: Envia um valor para uma fila (queue) a cada 1 segundo.
-        Tarefa 2: Recebe esse valor da fila e faz algo com ele (por exemplo, imprime no terminal).
-    Além disso, vamos usar notificações de tarefas para sincronizar a comunicação entre as tarefas.
-    */
-    // Cria a fila com capacidade para armazenar 10 valores inteiros
-    fila = xQueueCreate(10, sizeof(int));
+    fila = xQueueCreate(5, sizeof(int));
 
     // Cria as tarefas
     xTaskCreate(tarefa2, "Tarefa 2", 2048, NULL, 1, &task2_handle);
     xTaskCreate(tarefa1, "Tarefa 1", 2048, NULL, 1, &task1_handle);
+
+    // Cria o semáforo
+    semaforo = xSemaphoreCreateBinary();
+    xSemaphoreGive(semaforo); // Inicializa disponível
+
+    // Cria as tarefas
+    xTaskCreatePinnedToCore(tarefa3, "Tarefa3", 2048, NULL, 1, NULL, 0);
+    xTaskCreatePinnedToCore(tarefa4, "Tarefa4", 2048, NULL, 1, NULL, 1);
 }
